@@ -277,15 +277,18 @@ def bands_from_systems(systems, scale, page_index, staff_index):
 
 # ----------------------------- title block --------------------------------
 
-def title_block(doc, page0_staves, scale):
+def title_block(doc, page_index, page_staves, scale):
     """Return (clip_rect_in_points, title_line) for the title area above the
-    first staff on page 1, so its original typography can be reused verbatim."""
-    if not page0_staves:
+    first staff of the first selected page, so its original typography can be
+    reused verbatim."""
+    if not page_staves:
         return None, ""
-    page = doc[0]
+    page = doc[page_index]
     W = page.rect.width
-    top_staff = min(page0_staves, key=lambda s: s.top)
-    cut = max(0.0, (top_staff.top - top_staff.height * 0.6) / scale)
+    top_staff = min(page_staves, key=lambda s: s.top)
+    # Stop well above the first staff so tempo marks and high ledger notes from
+    # the top part don't bleed into the reused title block.
+    cut = max(0.0, (top_staff.top - top_staff.height * 1.3) / scale)
     region = fitz.Rect(0, 0, W, cut)
     d = page.get_text("dict", clip=region)
 
@@ -314,7 +317,7 @@ A4_W, A4_H = 595, 842
 
 
 def build_output(doc, bands, out_path, *, page_size="letter", landscape=False,
-                 margin=40, gap=12, header_rect=None, title="",
+                 margin=40, gap=12, header_rect=None, header_page=0, title="",
                  part_label="Cello", page_numbers=True, show_header=True):
     pw, ph = (A4_W, A4_H) if page_size == "a4" else (LETTER_W, LETTER_H)
     if landscape:
@@ -341,7 +344,7 @@ def build_output(doc, bands, out_path, *, page_size="letter", landscape=False,
             s = min(usable_w / header_rect.width, 130 / header_rect.height)
             dw, dh = header_rect.width * s, header_rect.height * s
             x = margin + (usable_w - dw) / 2
-            pg.show_pdf_page(fitz.Rect(x, y, x + dw, y + dh), doc, 0, clip=header_rect)
+            pg.show_pdf_page(fitz.Rect(x, y, x + dw, y + dh), doc, header_page, clip=header_rect)
             y += dh + 6
         lab = part_label.upper()
         tw = fitz.get_text_length(lab, fontname="hebo", fontsize=17)
@@ -408,6 +411,24 @@ def debug_overlay(page, target_px, staff_index, out_png, staves_per_system=0):
 
 # ----------------------------- cli ----------------------------------------
 
+def parse_pages(spec, n):
+    """Parse a 1-based inclusive page spec like "9-21" or "3,9-21" into a sorted
+    list of 0-based page indices. Returns None for "all pages"."""
+    if not spec:
+        return None
+    out = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            out.extend(range(int(a), int(b) + 1))
+        else:
+            out.append(int(part))
+    return sorted({p - 1 for p in out if 1 <= p <= n})
+
+
 def main():
     ap = argparse.ArgumentParser(description="Extract one instrument's staff into a large-print part.")
     ap.add_argument("input", help="source PDF")
@@ -416,6 +437,9 @@ def main():
                     help="0-based staff position within each system (cello 2nd from top = 1)")
     ap.add_argument("--staves-per-system", type=int, default=0,
                     help="staves per system for regular scores (0 = auto-detect)")
+    ap.add_argument("--pages", default="",
+                    help="1-based page range to process, e.g. '9-21' (default: whole PDF). "
+                         "Handy for multi-piece books where only one arrangement has your part.")
     ap.add_argument("--part-label", default="Cello", help="part name shown in the header")
     ap.add_argument("--title", default="", help="override the running title (else read from the score)")
     ap.add_argument("--detect-px", type=int, default=1600,
@@ -431,10 +455,13 @@ def main():
 
     doc = fitz.open(args.input)
 
+    selected = parse_pages(args.pages, doc.page_count)
+    page_indices = selected if selected is not None else list(range(doc.page_count))
+
     detected = []  # (page_index, staves, scale)
-    for page in doc:
-        staves, scale = detect_page_staves(page, args.detect_px)
-        detected.append((page.number, staves, scale))
+    for i in page_indices:
+        staves, scale = detect_page_staves(doc[i], args.detect_px)
+        detected.append((i, staves, scale))
 
     spm = args.staves_per_system
     if not spm:
@@ -452,7 +479,8 @@ def main():
         print("wrote debug_overlay.png")
         return
 
-    header_rect, detected_title = title_block(doc, detected[0][1], detected[0][2])
+    first_idx = detected[0][0]
+    header_rect, detected_title = title_block(doc, first_idx, detected[0][1], detected[0][2])
     title = args.title or detected_title or Path(args.input).stem.replace("_", " ")
 
     all_bands = []
@@ -463,11 +491,11 @@ def main():
     n_pages = build_output(
         doc, all_bands, args.output,
         page_size=args.page_size, landscape=args.landscape, margin=args.margin,
-        gap=args.gap, header_rect=header_rect, title=title,
+        gap=args.gap, header_rect=header_rect, header_page=first_idx, title=title,
         part_label=args.part_label, page_numbers=not args.no_page_numbers,
         show_header=not args.no_header,
     )
-    print(f"extracted {len(all_bands)} lines from {doc.page_count} pages "
+    print(f"extracted {len(all_bands)} lines from {len(detected)} pages "
           f"(staves-per-system = {spm}) -> {n_pages} pages: {args.output}")
 
 
