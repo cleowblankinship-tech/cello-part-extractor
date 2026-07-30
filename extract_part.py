@@ -57,14 +57,47 @@ def render_gray(page: "fitz.Page", target_px: int = 1600):
     return img, scale
 
 
-def find_staff_lines(gray: np.ndarray, ink_frac: float = 0.4) -> list[int]:
+def otsu_threshold(gray: np.ndarray) -> int:
+    """Otsu's method: pick the gray level that best separates ink from paper.
+
+    Fixed thresholds fail on scans, where staff lines are gray rather than
+    black. Otsu adapts per page, so the same code handles clean born-digital
+    PDFs and photocopied/scanned ones.
+    """
+    hist = np.bincount(gray.ravel(), minlength=256).astype(np.float64)
+    total = gray.size
+    sum_all = np.dot(np.arange(256), hist)
+    w_b = 0.0
+    sum_b = 0.0
+    best_var, thr = -1.0, 127
+    for t in range(256):
+        w_b += hist[t]
+        if w_b == 0:
+            continue
+        w_f = total - w_b
+        if w_f == 0:
+            break
+        sum_b += t * hist[t]
+        m_b = sum_b / w_b
+        m_f = (sum_all - sum_b) / w_f
+        var = w_b * w_f * (m_b - m_f) ** 2
+        if var > best_var:
+            best_var, thr = var, t
+    return max(thr, 100)  # guard against washed-out scans picking paper texture
+
+
+def binarize(gray: np.ndarray) -> np.ndarray:
+    """Ink mask (True = dark) using an adaptive threshold."""
+    return gray < otsu_threshold(gray)
+
+
+def find_staff_lines(dark: np.ndarray, ink_frac: float = 0.4) -> list[int]:
     """Return the center row of each staff line.
 
     A staff line spans most of the system width, so it shows up as a row with a
     very long continuous run of dark pixels. We flag such rows, then collapse
     each vertical run of flagged rows (one thick line) into a single center.
     """
-    dark = gray < 128
     h, w = dark.shape
     min_run = int(ink_frac * w)
     flagged = []
@@ -240,8 +273,8 @@ def page_systems(staves, staves_per_system):
 def detect_page_staves(page, target_px):
     """Detect every staff on a page (flat, top-to-bottom) with crop bounds."""
     gray, scale = render_gray(page, target_px)
-    dark = gray < 128
-    staves = cluster_staves(find_staff_lines(gray), dark)
+    dark = binarize(gray)
+    staves = cluster_staves(find_staff_lines(dark), dark)
     compute_vertical_bounds(staves, dark)
     return staves, scale
 
@@ -250,12 +283,17 @@ def detect_page_staves(page, target_px):
 
 @dataclass
 class Band:
-    """A cropped strip (in PDF points) to place on an output page."""
+    """A cropped strip (in PDF points) to place on an output page.
+
+    If `text` is set, this is a divider line (e.g. a TACET marker) rendered as
+    centered text instead of a cropped image.
+    """
     page_index: int
-    x0: float
-    y0: float
-    x1: float
-    y1: float
+    x0: float = 0.0
+    y0: float = 0.0
+    x1: float = 0.0
+    y1: float = 0.0
+    text: str = None
 
 
 def bands_from_systems(systems, scale, page_index, staff_index):
@@ -356,6 +394,17 @@ def build_output(doc, bands, out_path, *, page_size="letter", landscape=False,
 
     bottom_limit = ph - margin - footer_h
     for b in bands:
+        if getattr(b, "text", None):
+            dh = 26.0
+            if state["y"] + dh > bottom_limit and state["lines"] > 0:
+                new_page()
+            pg = state["page"]
+            tw = fitz.get_text_length(b.text, fontname="hebo", fontsize=11)
+            pg.insert_text(((pw - tw) / 2, state["y"] + 15), b.text,
+                           fontsize=11, fontname="hebo", color=(0.15, 0.15, 0.15))
+            state["y"] += dh + gap
+            state["lines"] += 1
+            continue
         bw, bh = b.x1 - b.x0, b.y1 - b.y0
         if bw <= 0 or bh <= 0:
             continue
@@ -386,8 +435,8 @@ def build_output(doc, bands, out_path, *, page_size="letter", landscape=False,
 
 def debug_overlay(page, target_px, staff_index, out_png, staves_per_system=0):
     gray, scale = render_gray(page, target_px)
-    dark = gray < 128
-    staves = cluster_staves(find_staff_lines(gray), dark)
+    dark = binarize(gray)
+    staves = cluster_staves(find_staff_lines(dark), dark)
     compute_vertical_bounds(staves, dark)
     systems = page_systems(staves, staves_per_system)
 

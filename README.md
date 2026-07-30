@@ -41,6 +41,10 @@ vertical crop is **content-aware**: it grows out from the staff through attached
 ink — ledger notes, slurs, dynamics — and stops at the whitespace between
 staves, so it doesn't clip your notes or pull in the neighbour's lyrics.
 
+Staff detection uses an **adaptive (Otsu) threshold**, so it works on scanned /
+photocopied scores where the staff lines are grey rather than solid black, not
+just clean born-digital PDFs.
+
 ## Key options
 
 | Option | Default | What it does |
