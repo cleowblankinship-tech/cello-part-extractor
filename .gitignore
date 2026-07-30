@@ -1,0 +1,7 @@
+# Local sample scores (often copyrighted) and generated output
+samples/
+output/
+debug_overlay.png
+*.pyc
+__pycache__/
+.venv/
