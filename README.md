@@ -24,6 +24,10 @@ python extract_part.py samples/all_of_me.pdf -o output/all_of_me_cello.pdf
 
 # See exactly what the detector found on a page (writes debug_overlay.png)
 python extract_part.py samples/all_of_me.pdf --debug-page 0
+
+# Multi-piece book: only pages 9-21 are the string-quartet arrangement whose
+# cello is the 4th of 6 staves
+python extract_part.py wedding_book.pdf --pages 9-21 --staff-index 3 -o cello.pdf
 ```
 
 The debug overlay colours each staff of every system and puts magenta brackets
@@ -43,6 +47,7 @@ staves, so it doesn't clip your notes or pull in the neighbour's lyrics.
 | --- | --- | --- |
 | `--staff-index N` | `1` | 0-based position of your part within each system. Cello 2nd from top = `1`; bottom staff of a 4-staff system = `3`. |
 | `--staves-per-system N` | auto | Staves per system for regular scores. Auto-detected; set it if a page is misgrouped. |
+| `--pages A-B` | all | 1-based, inclusive page range to process. Use it for multi-piece books where only one arrangement has your part (e.g. `--pages 9-21`). |
 | `--part-label TEXT` | `Cello` | Name shown in the header and running title. |
 | `--title TEXT` | from score | Override the running title (otherwise read from the title block). |
 | `--gap PT` | `12` | Vertical space between lines. Lower = more lines per page. |
